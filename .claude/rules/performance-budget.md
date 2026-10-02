@@ -9,7 +9,7 @@ A monitor app must not load the machine. These limits come from spec N1–N3:
 
 | Condition | RAM | CPU (1 core) |
 |---|---|---|
-| Popover closed | < 30 MB | < 1% |
+| Popover closed (also at full system load) | < 30 MB | < 1% |
 | Popover open | < 30 MB | < 5% |
 
 1. Run `/bin/ps` only while the popover is open. Stop the process sampler on close.
@@ -19,4 +19,5 @@ A monitor app must not load the machine. These limits come from spec N1–N3:
 5. Replace the animation timer only when the interval changes by more than 5 ms.
 6. Clear `IconCache` and `ProcessCPUTracker` when the popover closes.
 7. Do not use `Timer` intervals below 0.03 s.
-8. For a change to a sampler, the animator, or the popover, ask the `perf-auditor` agent to measure before you say the task is done.
+8. Never set `NSStatusBarButton.image` for each animation frame. It costs about 0.3% CPU per change. Set `contents` of a layer to a cached `CGImage` (spec section 6.1).
+9. For a change to a sampler, the animator, or the popover, ask the `perf-auditor` agent to measure before you say the task is done.

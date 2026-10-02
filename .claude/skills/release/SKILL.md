@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 1. Check that the working tree is clean: `git status`. If it is not clean, ask the user before you continue.
 2. Ask the user for the version number. Set `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`.
-3. Run `swift test`. Stop if a test fails.
+3. Run `scripts/test.sh`. Stop if a test fails.
 4. Ask the `perf-auditor` agent to measure. Stop if a budget check fails.
 5. Ask the user which signing to use:
    - **Ad-hoc:** `scripts/make-app.sh`. Tell the user that friends must right-click the app and select **Open** the first time.

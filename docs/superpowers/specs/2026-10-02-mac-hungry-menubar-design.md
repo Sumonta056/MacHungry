@@ -1,11 +1,11 @@
 # MacHungry — Menu Bar System Monitor: Design Spec
 
-- Date: 2026-10-02
-- Status: Approved in conversation. Waiting for written-spec review.
+- Date: 2026-10-02 (revised 2026-10-03 after the prototype)
+- Status: Approved in conversation. The prototype verified all decisions in section 13. Temperature added on 2026-10-03.
 
 ## 1. Goal
 
-MacHungry is a macOS menu bar app. It shows the live CPU % and RAM % in the menu bar, next to an animation. A high CPU value makes the animation move faster. A click opens a popover with the top 10 apps by CPU usage.
+MacHungry is a macOS menu bar app. It shows the live CPU %, RAM %, and CPU temperature in the menu bar, next to an animation. A high CPU value makes the animation move faster. A click opens a popover with the top 10 apps by CPU usage.
 
 The user shares the app with friends and a team, outside the Mac App Store.
 
@@ -24,23 +24,27 @@ The user shares the app with friends and a team, outside the Mac App Store.
 | F7 | The popover shows the top 10 apps by CPU %. Helper processes add into their parent app. A process without an app bundle shows by its process name. |
 | F8 | The top 10 list includes processes of all users, including root. |
 | F9 | The top 10 list updates every 1 s while the popover is open. The first result shows 0.5 s after open. |
-| F10 | Each row shows the app icon, the name, and the CPU %. |
+| F10 | Each row shows the app icon, the CPU %, and the name. |
 | F11 | A row of a quittable app has a quit button. A click shows a confirmation dialog. `Quit` sends a normal (not forced) quit request. |
 | F12 | The popover has a "Launch at login" toggle. |
-| F13 | The popover has a "Quit App" button that quits MacHungry. |
-| F14 | A tooltip on the menu bar item shows "CPU NN% · RAM NN%". |
+| F13 | The popover has a "Quit MacHungry" button. |
+| F14 | A tooltip on the menu bar item shows "CPU NN% · RAM NN%", plus " · NN°C" when the temperature is known. |
+| F15 | On Apple Silicon, the menu bar shows a thermometer icon + the CPU temperature (smoothed hottest CPU core) after RAM. |
+| F16 | The popover shows a "Temp" row: CPU °C and GPU °C. |
+| F17 | If the Mac has no known sensors (Intel, unknown chip), the app hides the temperature. It never shows a guess. |
 
 ### 2.2 Non-functional
 
 | ID | Requirement |
 |---|---|
 | N1 | RAM use of MacHungry is less than 30 MB. |
-| N2 | CPU use of MacHungry is less than 1% of 1 core when the popover is closed. |
+| N2 | CPU use of MacHungry is less than 1% of 1 core when the popover is closed, also at full system load. |
 | N3 | While the popover is open, CPU use is less than 5% of 1 core. |
 | N4 | Minimum macOS version: 14 (Sonoma). |
 | N5 | The app has no Dock icon (`LSUIElement = true`). |
 | N6 | The app builds with the Xcode Command Line Tools only. Full Xcode is not necessary. |
 | N7 | The app works in light mode and dark mode. |
+| N8 | The app is a universal binary (Apple Silicon and Intel). |
 
 ### 2.3 Out of scope (version 1)
 
@@ -49,72 +53,96 @@ The user shares the app with friends and a team, outside the Mac App Store.
 - Force quit.
 - History graphs, alerts, or notifications.
 - A rep counter for the push-ups or pull-ups themes.
-- Any animation that follows RAM.
+- Any animation that follows RAM or temperature.
+- A "hottest sensor anywhere" value (as the Hot app shows). It reads all `T` SMC keys and costs about 0.4% CPU.
 
 ## 3. Definitions
 
 - **CPU % (menu bar):** The busy share of all cores over the last 1 s. Range 0–100%.
 - **CPU % (top 10 row):** The CPU time of the app over the last sample window ÷ the wall time × 100. 1 full core = 100%, so 1 app can show more than 100%. This matches Activity Monitor.
 - **RAM %:** "Memory Used" as in Activity Monitor ÷ total physical memory × 100.
+- **CPU temperature:** the hottest of the CPU core sensors in the chip's key table (5.6), smoothed. It is not the hottest sensor of the whole Mac, so it is 7–9 °C lower than the Hot app on the test Mac.
 
 ## 4. Architecture
 
-Approach: native AppKit `NSStatusItem` for the menu bar item, and an `NSPopover` that holds a SwiftUI view. Reason: only AppKit animates the menu bar image reliably. SwiftUI `MenuBarExtra` can freeze or stutter the label.
-
 ```
-            ┌─────────── Sampling (background actor) ──────────┐
+            ┌──────── HungrySystem (background actor) ─────────┐
  timer 1s → │ SystemSampler  → CPU %, RAM %                     │
  timer 1s → │ ProcessSampler → ps → per-PID CPU → AppGrouper    │
  (popover   │                                                   │
   open only)└──────────────────────┬────────────────────────────┘
                                    ▼
-                        StatsStore (@MainActor, @Observable)
+                    StatsMonitor → StatsStore (@MainActor, @Observable)
                      ┌─────────────┴──────────────┐
                      ▼                            ▼
           StatusItemController             PopoverView (SwiftUI)
+          ├ StatusContentView (layers)     ├ PopoverModel (@Observable)
           ├ MenuBarAnimator                ├ Top 10 rows + icons
           │   └ AnimationTheme (protocol)  ├ Theme picker
-          └ icon + text                    ├ Quit row → AppTerminator
+          └ StatusImageComposer            ├ Quit row → AppTerminator
                                            └ Toggle → LoginItemManager
 ```
 
-### 4.1 Units
+### 4.1 Modules
 
-| Unit | Module | Job | Depends on |
+| Module | Kind | Contents | May import |
 |---|---|---|---|
-| `CPUCalculator` | HungryCore | Pure function: 2 tick snapshots → CPU %. | nothing |
-| `MemoryCalculator` | HungryCore | Pure function: page counts + page size + total → RAM %. | nothing |
-| `PSParser` | HungryCore | Parses `ps` output lines into `(pid, cpuSeconds, path)`. | nothing |
-| `ProcessCPUTracker` | HungryCore | Keeps the last CPU time for each PID. Computes the % per PID. Removes PIDs that stopped. | nothing |
-| `AppGrouper` | HungryCore | Maps a path to an app name and a bundle path. Sums the % of each app. Returns the top N. | nothing |
-| `AnimationTheme` | HungryCore | Protocol for 1 theme. | nothing |
-| `SpeedCurve` | HungryCore | Smoothing + CPU → frame interval. | nothing |
-| `ThemeRegistry` | HungryCore | Holds the list of themes and the default theme. | `AnimationTheme` |
-| `CatTheme`, `PushUpTheme`, `PullUpTheme` | HungryCore | Theme values and frame names. | `AnimationTheme` |
-| `SystemSampler` | MacHungry | Reads `host_processor_info`, `host_statistics64`, `hw.memsize`. | Mach APIs |
-| `ProcessSampler` | MacHungry | Runs `/bin/ps`. Falls back to `libproc`. | `PSParser`, `ProcessCPUTracker` |
-| `StatsStore` | MacHungry | Holds the latest values for the UI. | samplers |
-| `MenuBarAnimator` | MacHungry | Changes the frame on a timer. Knows only `AnimationTheme`. | `SpeedCurve`, `ThemeRegistry` |
-| `StatusItemController` | MacHungry | Owns the `NSStatusItem` and the popover. | AppKit |
-| `PopoverView` | MacHungry | The SwiftUI popover. | `StatsStore` |
-| `IconCache` | MacHungry | App icons for the visible rows. Clears on popover close. | `NSWorkspace` |
-| `AppTerminator` | MacHungry | Sends a normal quit request to all instances of 1 app. | `NSRunningApplication` |
-| `LoginItemManager` | MacHungry | Registers or unregisters `SMAppService.mainApp`. | ServiceManagement |
+| `HungryCore` | library | Pure logic. Unit tests target it. | `Foundation` only |
+| `HungrySystem` | library | Samplers that call Mach, `libproc`, `/bin/ps`, and the SMC. | `Darwin`, `Foundation`, `IOKit`, `HungryCore` |
+| `MacHungry` | executable | AppKit and SwiftUI. | all |
 
-### 4.2 Theme interface
+Reason for `HungrySystem`: a test target that imports an **executable** target breaks the Swift Testing macros with the Command Line Tools. A library target can be tested.
+
+### 4.2 Units
+
+| Unit | Module | Job |
+|---|---|---|
+| `CoreTicks`, `CPUCalculator` | HungryCore | 2 tick snapshots → CPU %. Handles counter wrap-around. |
+| `MemoryPages`, `MemoryUsage`, `MemoryCalculator` | HungryCore | Page counts + page size + total → RAM %. |
+| `ProcessSample`, `PSParser` | HungryCore | `ps` output → `(pid, cpuSeconds, path)`. |
+| `ProcessUsage`, `ProcessCPUTracker` | HungryCore | CPU % per PID from 2 samples. Removes PIDs that stopped. |
+| `AppIdentity`, `AppUsage`, `AppGrouper` | HungryCore | Path → app. Sums each app. Returns the top N. |
+| `RankStabilizer` | HungryCore | Changes the row order only when the difference is more than 1%. |
+| `SpeedCurve` | HungryCore | Smoothing, CPU → frame interval, timer replace rule. |
+| `UsageFormatter` | HungryCore | `72%`, `--`, `68°`, tooltip text, `9.8 / 16 GB`, `CPU 68°C  GPU 64°C`. |
+| `TemperatureReading`, `ChipFamily`, `SensorKeys`, `TemperatureSensors` | HungryCore | Chip detection, SMC key tables, hottest value, smoothing. |
+| `AnimationTheme`, `ThemeRegistry`, `CatTheme`, `PushUpTheme`, `PullUpTheme` | HungryCore | Theme values. |
+| `SystemSampler` | HungrySystem | `host_processor_info`, `host_statistics64`, `hw.memsize`. |
+| `PSRunner` | HungrySystem | Runs `/bin/ps` with a 0.8 s watchdog. |
+| `LibprocReader` | HungrySystem | Fallback: own processes only. |
+| `ProcessSampler`, `ProcessSnapshot` | HungrySystem | `ps` or fallback → tracker → top N. |
+| `SMCReader` | HungrySystem | Opens `AppleSMC` and reads `flt ` keys. |
+| `TemperatureSampler` | HungrySystem | Detects the chip, keeps the keys that exist, reads the hottest CPU and GPU value. |
+| `SamplingEngine`, `SystemSnapshot` | HungrySystem | 1 `actor` that owns all samplers. |
+| `StatsStore` | MacHungry | Latest values for the UI. |
+| `StatsMonitor` | MacHungry | Runs the 1 s loops, writes `StatsStore`. |
+| `TemplateImageRenderer` | MacHungry | Draws a 2× bitmap image. |
+| `StatusImageComposer` | MacHungry | The stats image (icons + numbers). |
+| `StatusContentView` | MacHungry | Layer-backed view that shows the frame and the stats. |
+| `FrameLoader` | MacHungry | Loads the theme PNG files. |
+| `MenuBarAnimator` | MacHungry | Changes the frame on a timer. |
+| `ThemePreference` | MacHungry | Saves the theme id in `UserDefaults`. |
+| `StatusItemController` | MacHungry | Owns the status item and the popover. |
+| `PopoverModel`, `PopoverView`, `UsageGaugeRow`, `TemperatureRow`, `AppRowView` | MacHungry | The popover. |
+| `IconCache`, `AppTerminator`, `LoginItemManager` | MacHungry | Icons, quit, launch at login. |
+| `AppDelegate`, `MacHungryApp` | MacHungry | Start-up. |
+
+### 4.3 Theme interface
 
 ```swift
-protocol AnimationTheme {
+public protocol AnimationTheme: Sendable {
     var id: String { get }
     var displayName: String { get }
-    var frameNames: [String] { get }
+    var frameCount: Int { get }
     var maxInterval: TimeInterval { get }
     var minInterval: TimeInterval { get }
 }
 ```
 
+An extension gives `frameNames` (`frame-1` … `frame-N`) and `frameInterval(forCPU:)`.
+
 To add a theme:
-1. Add 1 file that conforms to `AnimationTheme`, and add its frame PNG files in `Resources/Themes/<id>/`.
+1. Add 1 file that conforms to `AnimationTheme`, and add its PNG files in `Resources/Themes/<id>/`.
 2. Add 1 line in `ThemeRegistry`.
 
 `MenuBarAnimator` does not change.
@@ -123,116 +151,161 @@ To add a theme:
 
 ### 5.1 Total CPU % (every 1 s, always)
 
-1. Read the ticks of each core with `host_processor_info(PROCESSOR_CPU_LOAD_INFO)`: `user`, `system`, `nice`, `idle`.
-2. For each core: `busy = Δuser + Δsystem + Δnice`, `total = busy + Δidle`.
-3. `CPU % = Σ busy ÷ Σ total × 100`. If `Σ total = 0`, the result is 0.
-4. Free the buffer from `host_processor_info` with `vm_deallocate` after each read.
+1. Read the ticks of each core with `host_processor_info(PROCESSOR_CPU_LOAD_INFO)`.
+2. For each core: `busy = Δuser + Δsystem + Δnice`, `total = busy + Δidle`. Use wrapping subtraction (`&-`) on the 32-bit counters.
+3. `CPU % = Σ busy ÷ Σ total × 100`. If `Σ total = 0`, or the core count changed, the result is 0.
+4. Free the buffer with `vm_deallocate` after each read.
 
 ### 5.2 RAM % (every 1 s, always)
 
 1. Read `vm_statistics64` with `host_statistics64(HOST_VM_INFO64)`.
-2. `usedPages = (internal_page_count − purgeable_count) + wire_count + compressor_page_count`.
-3. `RAM % = usedPages × vm_kernel_page_size ÷ hw.memsize × 100`.
-4. The popover also shows used GB / total GB.
+2. `usedPages = max(internal − purgeable, 0) + wire + compressor`.
+3. `RAM % = min(usedPages × getpagesize(), hw.memsize) ÷ hw.memsize × 100`.
 
 ### 5.3 Top 10 apps (every 1 s, popover open only)
 
-1. Run `/bin/ps -axo pid=,time=,comm=`. `ps` is setuid root, so it can read all processes. A normal app with `libproc` cannot read root processes (test result on 2026-10-02: 247 of 762 processes denied with `EPERM`).
-2. `PSParser` converts the `time` column to seconds. It accepts `m:ss.cc`, `mmmm:ss.cc` (minutes can be more than 59), `hh:mm:ss.cc`, and `dd-hh:mm:ss.cc`. The path can contain spaces, so the parser takes the rest of the line after the 2nd column.
+1. Run `/bin/ps -axo pid=,time=,comm=`. `ps` is setuid root, so it reads all processes. A normal app with `libproc` cannot read root processes (test on 2026-10-02: 247 of 762 processes denied with `EPERM`).
+2. `PSParser` converts the `time` column to seconds. It accepts `m:ss.cc`, `mmmm:ss.cc` (minutes can be more than 59), `hh:mm:ss.cc`, and `dd-hh:mm:ss.cc`. The path is the rest of the line, so it can contain spaces.
 3. `ProcessCPUTracker`:
-   - For a known PID: `CPU % = (cpuSeconds − lastCpuSeconds) ÷ (now − lastSampleTime) × 100`.
-   - For a new PID: store the value. It shows from the next sample.
-   - If `cpuSeconds < lastCpuSeconds` (PID reuse), store the new value and show 0 for this sample.
+   - Known PID: `CPU % = Δ cpuSeconds ÷ Δ wall seconds × 100`. The wall clock is `ProcessInfo.systemUptime`.
+   - New PID: store the value. It shows from the next sample.
+   - `cpuSeconds` goes down (PID reuse): show 0 for this sample.
    - Remove PIDs that are not in the current output.
-4. `AppGrouper`:
-   - Find the **outermost** `.app` component in the path. Example: `/Applications/Google Chrome.app/Contents/Frameworks/.../Google Chrome Helper.app/.../Google Chrome Helper` → `Google Chrome.app`.
-   - The app name is the bundle file name without `.app`.
-   - If there is no `.app`, the name is the last path component.
-   - Sum the % of each group. Sort from high to low. Keep 10.
-5. On popover open: take the 1st sample at once, the 2nd sample after 0.5 s, then 1 sample each 1 s.
-6. Measured cost: 1 `ps` run ≈ 40 ms. At 1 run each second, this is about 4% of 1 core, only while the popover is open.
+4. `AppGrouper`: the **outermost** `.app` component of an absolute path gives the app name and the bundle path. Otherwise the name is the last path component. Sum, sort (ties by name), keep 10.
+5. `RankStabilizer` keeps the previous order unless a row beats the row above it by more than 1%.
+6. On popover open: reset the tracker, take the 1st sample at once, the 2nd sample after 0.5 s, then 1 sample each 1 s.
+7. Measured cost of 1 `ps` run: about 40 ms.
 
 ### 5.4 Animation speed
 
-1. Smoothing: `smoothCPU = 0.7 × smoothCPU + 0.3 × newCPU`, once each 1 s sample.
-2. `interval = maxInterval − (maxInterval − minInterval) × (smoothCPU ÷ 100)`. Clamp `smoothCPU` to 0–100.
-3. Default values:
+1. Smoothing: `smoothCPU = 0.7 × smoothCPU + 0.3 × newCPU`, once each 1 s. Invalid values (NaN, infinite) count as 0. Values clamp to 0–100.
+2. `interval = max(maxInterval − (maxInterval − minInterval) × smoothCPU ÷ 100, 0.03 s)`.
 
-| Theme | maxInterval (0%) | minInterval (100%) |
-|---|---|---|
-| Cat | 0.20 s | 0.03 s |
-| Push-ups | 0.25 s | 0.04 s |
-| Pull-ups | 0.25 s | 0.04 s |
+| Theme | Frames | maxInterval (0%) | minInterval (100%) |
+|---|---|---|---|
+| Cat | 5 | 0.20 s | 0.03 s |
+| Push-ups | 6 | 0.25 s | 0.04 s |
+| Pull-ups | 6 | 0.25 s | 0.04 s |
 
-4. 1 repetition (push-up or pull-up) uses all frames of the theme.
-5. A main-thread timer shows the next frame. When the interval changes by more than 5 ms, the animator replaces the timer.
+3. 1 repetition (push-up or pull-up) uses all frames of the theme.
+4. The animator replaces its timer only when the interval changes by more than 5 ms. Timer tolerance: 10% of the interval.
 
 ### 5.5 Thread model
 
-- `SystemSampler` and `ProcessSampler` run in 1 background Swift `actor`.
-- `ps` runs with `Process`. The sampler reads its output on the background actor. The timeout is 0.8 s.
-- `StatsStore` is `@MainActor`. The UI reads only from `StatsStore`.
+- `SamplingEngine` is 1 background `actor` that owns the system, process, and temperature samplers.
+- `StatsStore`, `StatsMonitor`, and all UI types are `@MainActor`.
+
+### 5.6 Temperature (every 2 s, always)
+
+1. Source: the SMC (System Management Controller) through IOKit (`AppleSMC`, `IOConnectCallStructMethod`, selector 2). No admin password. Read key info (command 9), then the value (command 5). Use only keys of type `flt ` with 4 bytes (little-endian `Float32`).
+2. The request struct must be exactly **80 bytes** like the C `SMCKeyData_t`. `SMCKeyInfo` needs 3 padding bytes after `attributes`, because Swift places the next field after the nested struct's size (9), not its padded size (12). Without the padding, every read fails.
+3. At start: read `machdep.cpu.brand_string`, detect `ChipFamily` (`Apple M<n>` → m1…m4; anything else → none), take the key table, and keep only the keys that exist as `flt ` on this Mac.
+
+| Family | CPU keys | GPU keys | Status |
+|---|---|---|---|
+| M1 (incl. Pro, Max) | Tp01 Tp05 Tp09 Tp0D Tp0H Tp0L Tp0P Tp0T Tp0X Tp0b | Tg05 Tg0D Tg0L Tg0T | verified on M1 Pro (Tg0L, Tg0T do not exist there) |
+| M2 | Tp01 Tp05 Tp09 Tp0D Tp0X Tp0b Tp0f Tp0j Tp1h Tp1l Tp1p Tp1t | Tg0f Tg0j | from the Stats app, not verified |
+| M3 | Te05 Te0L Te0P Te0S Tf04 Tf09 Tf0A Tf0B Tf0D Tf0E Tf44 Tf49 Tf4A Tf4B Tf4D Tf4E | Tf14 Tf18 Tf19 Tf1A Tf24 Tf28 Tf29 Tf2A | from the Stats app, not verified |
+| M4 | Te05 Te09 Te0H Te0S Tp01 Tp05 Tp09 Tp0D Tp0V Tp0Y Tp0b Tp0e | Tg0G Tg0H Tg0K Tg0L Tg0d Tg0e Tg0j Tg0k Tg1U Tg1k | from the Stats app, not verified |
+
+4. Each read: CPU = hottest valid CPU key, GPU = hottest valid GPU key. Valid: finite, > 0, < 150 °C.
+5. Smoothing: `new = 0.7 × old + 0.3 × reading` for each value. The first reading is used as is. A missing reading keeps the old value.
+6. The engine reads the temperature on every 2nd system sample (every 2 s).
+7. Measured on the M1 Pro: 1 read ≈ 3.2 ms, total app CPU 0.39% (+0.15%). Under full load the hottest core rose from about 63 to 73 °C within 2 s.
+8. Rejected: the HID sensors (`IOHIDEventSystemClient`, `PMU tdie…`) did not change under full load and cost 32–71 ms per read. Discovery of all `Tp`/`Te` keys found 33 keys, some at 85 °C at idle, and cost 8.3 ms.
 
 ## 6. User interface
 
-### 6.1 Menu bar item
+### 6.1 Menu bar item: how it draws (important)
+
+Measured on macOS 27: each change of `NSStatusBarButton.image` costs about 0.3% CPU, because AppKit lays out and redraws the status bar. An animation at 7 fps then costs about 5%, and at 33 fps about 10–25%.
+
+So the item draws this way:
+1. 1 status item. `button.image` is a **transparent placeholder** with the content size. The app sets it only when the content size changes.
+2. `statusItem.length = content width + 4 pt` (2 pt padding on each side).
+3. A layer-backed `StatusContentView` on top of the button shows the content: 1 tint layer, masked by 2 sublayers (frame, stats).
+4. A frame change only sets the frame sublayer's `contents` to a **cached** `CGImage`. This needs no layout and no color conversion.
+5. The stats sublayer gets a new image 1 time each second.
+6. The tint is solid white when the appearance best matches `.darkAqua`, else solid black.
+7. `StatusContentView.hitTest` returns `nil`, so clicks go to the button.
+
+Measured result: 0.23% CPU normal, 0.31% at full load (fastest animation), 15 MB.
+
+### 6.2 Menu bar item: layout
 
 ```
- [frame] [cpu]72% [memorychip]61%
+ [frame] [cpu]72% [memorychip]61% [thermometer.medium]68°
 ```
 
-- The frame is a monochrome template image, 18 pt high. macOS colors it for light and dark menu bars.
-- The CPU and RAM icons are the SF Symbols `cpu` and `memorychip`, about 11 pt wide. They go inside the title with `NSTextAttachment`.
-- The numbers use a monospaced-digit system font. The width stays the same when the values change.
-- If a value is not available, it shows `--`.
+| Value | Setting |
+|---|---|
+| Item height | `NSStatusBar.system.thickness` (22 pt on the test Mac) |
+| Text | `monospacedDigitSystemFont`, size `NSFont.menuBarFont(ofSize: 0).pointSize` (13 pt), weight `.semibold` |
+| Icons | SF Symbols `cpu`, `memorychip`, same point size, weight `.semibold`, scale `.medium` |
+| Number slot | width of the text `99%` (temperature: `99°`). The text is left-aligned in the slot. The width changes only at exactly 100% or 100 °C. |
+| Temperature group | shows only when a CPU temperature exists. Same gaps as the other groups. |
+| Gaps | frame → stats 2 pt, icon → number 1 pt, CPU group → RAM group 4 pt |
+| Missing value | `--` |
 
-### 6.2 Popover
+### 6.3 Popover layout
 
 ```
-┌──────────────────────────────────────┐
-│  CPU 72%   ████████░░                │
-│  RAM 61%   ██████░░░░   9.8 / 16 GB  │
-├──────────────────────────────────────┤
-│  Top apps by CPU                     │
-│  [icon] Google Chrome     84.2%  [×] │
-│  [icon] Xcode             31.0%  [×] │
-│  [icon] com.eset.endpoint 28.4%      │
-│  ...  (10 rows)                      │
-├──────────────────────────────────────┤
-│  Animation: [ Cat         ▾ ]        │
-│  [✓] Launch at login                 │
-│                          [Quit App]  │
-└──────────────────────────────────────┘
+┌─────────────────────────────────────┐
+│ CPU   72%  ▬▬▬▬▬▬▬                   │
+│ RAM   61%  ▬▬▬▬▬▬▬  9.8 / 16 GB      │
+│ Temp  CPU 68°C  GPU 64°C            │
+│─────────────────────────────────────│
+│ Top apps by CPU            limited  │
+│ [ic] 84.0% Google Chrome        (×) │
+│ [ic]  4.2% logd                     │
+│ ... (10 rows)                       │
+│─────────────────────────────────────│
+│ Animation [ Cat            ⌄ ]      │
+│ [ ] Launch at login                 │
+│                    [Quit MacHungry] │
+└─────────────────────────────────────┘
 ```
 
-### 6.3 Row behavior
+| Value | Setting |
+|---|---|
+| Size | fits the content (`.fixedSize()`), about 257 × 289 pt |
+| Font | `.callout`; headings `.callout.weight(.semibold)`; RAM detail `.caption` |
+| Control size | `.small` |
+| Padding / section spacing | 10 pt / 3 pt |
+| App rows | 15 pt high, 0 pt spacing, 4 pt between items |
+| Row items | icon 13 pt → CPU % (46 pt, right-aligned) → name (max 150 pt, truncated in the middle) |
+| Gauges and Temp row | label 38 pt (so "Temp" stays on 1 line), value 38 pt, bar 70 pt. The Temp row shows only when a reading exists. |
 
-1. The icon comes from `NSWorkspace.shared.icon(forFile:)` with the bundle path. A row without a bundle shows a generic icon.
-2. The `[×]` button shows only if `NSRunningApplication.runningApplications(withBundleIdentifier:)` returns 1 or more apps, the processes belong to the current user, and the app is not MacHungry.
-3. A click on `[×]` shows a dialog "Quit <name>?" with `Cancel` and `Quit`.
-4. `Quit` calls `terminate()` on each running instance. It does not call `forceTerminate()`.
-5. The list changes the order of 2 rows only when their CPU difference is more than 1%.
-6. Before the 2nd sample, the list shows "Measuring…".
+### 6.4 Row behavior
 
-### 6.4 Popover open and close
+1. The icon comes from `NSWorkspace.shared.icon(forFile:)` with the bundle path. A row without a bundle shows the generic executable icon.
+2. The `(×)` button shows only if the bundle has a bundle id, `NSRunningApplication` finds 1 or more instances, they belong to the current user, and the app is not MacHungry.
+3. A click on `(×)` shows an `NSAlert`: "Quit <name>?" with `Quit` and `Cancel`.
+4. `Quit` calls `terminate()` on each instance. It never calls `forceTerminate()`.
+5. Before the 2nd sample, the list shows "Measuring…". An empty list shows "No activity".
 
-1. Open: start `ProcessSampler`.
-2. Close (click outside or `Esc`): stop `ProcessSampler`, clear `ProcessCPUTracker`, and clear `IconCache`. The SwiftUI view is destroyed.
+### 6.5 Popover open and close
+
+1. Open: create a new `PopoverModel` and `PopoverView`, start the process sampling, activate the app, show the popover.
+2. Close: stop the process sampling, clear the tracker and `IconCache`, set `contentViewController = nil`.
 
 ## 7. Error handling
 
 | Problem | Behavior |
 |---|---|
 | `host_processor_info` or `host_statistics64` fails | Show `--` for that value. Try again on the next sample. |
-| `ps` fails, exits with an error, or takes more than 0.8 s | Use `libproc` (`proc_listallpids`, `proc_pid_rusage`, `proc_pidpath`) for that sample. Show a "limited" label in the popover. |
-| `libproc` CPU time | `ri_user_time + ri_system_time` are in Mach time units. Convert to ns with `mach_timebase_info`. |
+| `ps` fails, exits with an error, or takes more than 0.8 s | Use `LibprocReader` for that sample. Show "limited" in the popover. |
+| `libproc` CPU time | `ri_user_time + ri_system_time` are in Mach time units. Convert with `mach_timebase_info`. |
 | Malformed `ps` line | Skip the line. |
 | PID stops between samples | Remove it from the tracker. |
-| PID reuse (CPU time goes down) | Store as new. Show 0 for this sample. |
+| PID reuse | Show 0 for this sample. |
 | Quit request fails or the app ignores it | No message. The row stays while the app runs. |
-| `SMAppService` register or unregister fails | Set the toggle back. Show the error text below the toggle. |
-| Theme frame image is missing | Use the Cat theme. |
+| `SMAppService` register or unregister fails | Show the real status, and show the error text below the toggle. |
+| Theme frame images are missing | Use the Cat theme. If Cat is missing too, show the stats only. |
 | Saved theme id is unknown | Use the Cat theme. |
+| Unknown chip, Intel Mac, or `AppleSMC` cannot open | No temperature: the menu bar group and the Temp row do not show. |
+| `SMCParam` is not 80 bytes | `SMCReader.init` returns `nil` (no temperature). |
+| 1 SMC key fails or gives an invalid value | Ignore that key for this read. |
 
 ## 8. Project structure
 
@@ -240,52 +313,88 @@ To add a theme:
 mac-hungry/
 ├─ Package.swift                 (swift-tools-version 6.0, macOS 14)
 ├─ Sources/
-│  ├─ HungryCore/                (library, no AppKit)
-│  └─ MacHungry/                 (executable, AppKit + SwiftUI)
+│  ├─ HungryCore/                (+ Themes/)
+│  ├─ HungrySystem/
+│  └─ MacHungry/
 ├─ Resources/
-│  ├─ Info.plist                 (LSUIElement, bundle id, version)
-│  └─ Themes/{cat,pushup,pullup}/frame-N.png
-├─ Tests/HungryCoreTests/
-└─ scripts/make-app.sh
+│  ├─ Info.plist
+│  └─ Themes/{cat,pushup,pullup}/frame-N.png, frame-N@2x.png
+├─ Tests/
+│  ├─ HungryCoreTests/
+│  └─ HungrySystemTests/
+└─ scripts/
+   ├─ draw-frames.swift
+   ├─ make-app.sh
+   └─ test.sh
 ```
 
 ## 9. Testing
 
-Framework: Swift Testing (`import Testing`), run with `swift test`.
+Framework: Swift Testing (`import Testing`), run with `scripts/test.sh`.
 
-### 9.1 Unit tests (HungryCore)
+### 9.1 Unit tests (HungryCore) — 61 tests
 
-1. `CPUCalculator`: idle machine = 0%, full load = 100%, mixed cores, `Σ total = 0`.
-2. `MemoryCalculator`: known page counts → expected %.
-3. `PSParser`: `mm:ss.cc`, `hh:mm:ss.cc`, `dd-hh:mm:ss.cc`, paths with spaces, malformed lines.
-4. `ProcessCPUTracker`: normal delta, new PID, PID reuse, PID removal.
-5. `AppGrouper`: plain app, nested helper `.app`, daemon path, top-N sort, sum of a group.
-6. `SpeedCurve`: interval at 0%, 50%, 100%, values out of range, smoothing.
-7. `ThemeRegistry`: unknown id → Cat.
+1. `CPUCalculator`: idle, full load, mixed cores, no elapsed ticks, core count change, counter wrap-around.
+2. `MemoryCalculator`: normal, purgeable > internal, used > total, total = 0.
+3. `PSParser`: 5 time formats, 8 malformed times, a path with spaces, 6 malformed lines, mixed output.
+4. `ProcessCPUTracker`: baseline, normal delta, new PID, PID reuse, PID removal, zero elapsed time, reset.
+5. `AppGrouper`: plain app, nested helper, daemon, bare name, `.app.backup` folder, sum + sort + limit, ties, negative limit.
+6. `RankStabilizer`: first list, small difference, large difference, newcomer, dropped app.
+7. `SpeedCurve`: interval at 0/50/100/out-of-range/NaN, floor, smoothing, invalid input, timer replace rule.
+8. `ThemeRegistry`: order, lookup, unknown id, frame and interval rules, unique ids.
+9. `UsageFormatter`: percent, `--`, tooltip, memory detail.
+10. Temperature: chip detection (5 families, 5 unknown brands), key table rules, verified M1 keys, hottest filter, smoothing (first, normal, missing), `68°`, popover detail, tooltip with temperature.
 
-### 9.2 Integration test
+### 9.2 Integration tests (HungrySystem) — 7 tests, tag `integration`
 
-Run the real `SystemSampler` and `ProcessSampler` 2 times. Check: CPU % and RAM % are in 0–100, and the top list is not empty.
+1. `SystemSampler` values are in range.
+2. `PSRunner` reads root processes (PID 1).
+3. `LibprocReader` reads the test's own process.
+4. `ProcessSampler` is ready on the 2nd sample and gives 1–10 apps.
+5. `SMCParam` is 80 bytes.
+6. On a known chip, `TemperatureSampler` is available and the CPU value is 15–120 °C.
+7. An Intel brand string gives no temperature.
 
 ### 9.3 Manual checks
 
-1. Run the app for 10 minutes. Measure with `top -pid <pid>`. Pass: RAM < 30 MB, CPU < 1% with the popover closed, CPU < 5% with it open.
-2. Run `yes > /dev/null` on 4 terminals. Check that the animation becomes faster and `yes` shows in the top 10.
-3. Check the menu bar in light mode and dark mode.
-4. Check that the quit dialog appears, and that `Cancel` does nothing.
-5. Turn "Launch at login" on, log out, log in, and check that the app starts.
+1. Run the app for 60 s with `top`. Pass: RAM < 30 MB, CPU < 1% with the popover closed.
+2. Run 12 `yes > /dev/null` processes. Check that the animation runs faster, `yes` shows in the top 10, and CPU stays < 1%. Stop all `yes` processes.
+3. Keep the popover open for 60 s. Pass: CPU < 5%.
+4. Check the menu bar item in light mode and dark mode.
+5. Click `(×)`, check the dialog, and select `Cancel`.
+6. Turn "Launch at login" on, log out, log in, and check that the app starts.
+7. Compare the temperature with another app for 30 s. Expect a difference if that app shows the hottest sensor of the whole Mac (see section 3).
 
 ## 10. Build and distribution
 
-1. `scripts/make-app.sh` runs `swift build -c release`, builds `MacHungry.app` (binary, `Info.plist`, theme resources), signs it, and makes a DMG with `hdiutil`.
-2. Default signing: ad-hoc (`codesign -s -`). The friends must right-click the app and select **Open** the first time.
-3. With the flag `--identity "<Developer ID>"`, the script signs with the hardened runtime and sends the app to Apple with `xcrun notarytool`, then staples the ticket.
-4. Bundle id: `com.machungry.app`. Minimum macOS: 14.0.
+1. `scripts/make-app.sh` builds release binaries for `arm64` and `x86_64` (`--triple … --scratch-path .build/<arch>`), joins them with `lipo`, builds `build/MacHungry.app`, signs it, and makes `build/MacHungry.dmg`.
+2. Default signing: ad-hoc (`codesign -s -`). Friends must right-click the app and select **Open** the first time.
+3. With `--identity "<Developer ID>"`, the script signs with the hardened runtime, sends the DMG to `xcrun notarytool` (keychain profile `machungry-notary`, or `--profile`), and staples it.
+4. Bundle id: `com.machungry.app`. Version `0.1.0`, build `1`.
 
 ## 11. Animation art
 
 1. Do not copy RunCat art or any other art that has a copyright.
-2. Draw simple monochrome frames: Cat 5 frames, Push-ups 6 frames, Pull-ups 6 frames.
-3. Size: 18 pt high, @1x and @2x PNG, black on transparent. Mark them as template images at load time.
-4. A Swift script, `scripts/draw-frames.swift`, draws the version 1 frames with Core Graphics and writes the PNG files. The PNG files go into git, so a normal build does not run the script.
-5. A later art change replaces only the PNG files. The code does not change.
+2. `scripts/draw-frames.swift` draws the frames with Core Graphics and writes @1x and @2x PNG files. The PNG files go into git.
+3. Sizes: Cat 31 × 20 pt (5 frames), Push-ups 35 × 20 pt (6 frames), Pull-ups 20 × 20 pt (6 frames). Black on transparent.
+4. A later art change replaces only the PNG files, or changes the script. The app code does not change.
+
+## 12. Toolchain rules (found in the prototype)
+
+1. **Do not use SwiftUI `@State`, `@Entry`, or `@Previewable`.** In this SDK they are macros, and their plugin ships only with full Xcode. Keep view state in an `@Observable` model and use `Binding(get:set:)`. `@Observable` works.
+2. **Bitmap drawing order:** set `rep.size` **before** `NSGraphicsContext(bitmapImageRep:)`. The other order draws the content at half size.
+3. **Do not name a method `setFrameSize(_:)`** on an `NSView` subclass. It overrides `NSView.setFrameSize(_:)`.
+4. Do not change `button.image` for each animation frame (section 6.1).
+5. **Run tests with `scripts/test.sh`, not plain `swift test`.** The default build system (swiftbuild) omits the Swift Testing plugin path in about 50% of clean builds (`plugin for module 'TestingMacros' not found`). The script passes `-plugin-path <toolchain>/lib/swift/host/plugins/testing`. It passed 4 of 4 clean builds. The native build system cannot find the `Testing` module at all.
+
+## 13. Prototype record (2026-10-03)
+
+| Decision | Evidence |
+|---|---|
+| Layer drawing, not `button.image` per frame | `button.image` at 2/5/10/30 fps: 0.84/1.75/3.38/9.38% CPU. Layers at up to 33 fps: 0.31%. |
+| Sizes in 6.2 | Selected by the user from side-by-side variants in the real menu bar. |
+| Popover layout in 6.3 | Selected by the user from snapshots and the running app. |
+| `HungrySystem` module | Test target that imports the executable fails with the Command Line Tools. |
+| No `@State` | Build error: `plugin for module 'SwiftUIMacros' not found`. |
+| Universal binary | `lipo -info`: `x86_64 arm64`. App 1.1 MB, DMG 576 KB. |
+| Temperature from SMC core keys | Load test 63 → 73 °C in 2 s; HID sensors flat at 48 °C. Hot app reads all sensors (its `ThermalLog.swift`), so it shows 7–9 °C more. User chose CPU cores. |

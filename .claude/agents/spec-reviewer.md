@@ -16,7 +16,7 @@ Check:
 5. **Scope:** The change does not add features outside the task.
 6. **Safety:** No `forceTerminate()`, no force unwrap, no `try!` in `Sources/`.
 
-You can run `swift build` and `swift test`. Do not run other commands that change files.
+You can run `swift build` and `scripts/test.sh`. Do not run other commands that change files.
 
 Report each finding in 1 line, from most severe to least severe:
 `[BLOCKER|MAJOR|MINOR] file:line — problem — spec section or rule`

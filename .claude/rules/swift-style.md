@@ -15,3 +15,6 @@ paths:
 7. Prefer `struct` and `enum` over `class`. Use `final class` only for AppKit objects or identity.
 8. No force unwrap (`!`) and no `try!` in `Sources/`. Handle the failure as the spec section 7 says.
 9. Do not add third-party dependencies without the user's approval.
+10. Do not use SwiftUI `@State`, `@Entry`, or `@Previewable`. Their macro plugin needs full Xcode. Keep view state in an `@Observable` model and use `Binding(get:set:)`.
+11. With `NSBitmapImageRep`, set `rep.size` before you call `NSGraphicsContext(bitmapImageRep:)`. The other order draws at half size.
+12. Do not name methods of `NSView` subclasses like AppKit methods (for example `setFrameSize(_:)`).

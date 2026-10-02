@@ -3,7 +3,8 @@
   "permissions": {
     "allow": [
       "Bash(swift build:*)",
-      "Bash(swift test:*)",
+      "Bash(scripts/test.sh:*)",
+      "Bash(swift scripts/draw-frames.swift:*)",
       "Bash(swift package resolve:*)",
       "Bash(scripts/make-app.sh:*)",
       "Bash(ps -axo:*)",

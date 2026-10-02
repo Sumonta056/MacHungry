@@ -6,7 +6,7 @@ description: Build, bundle, and launch MacHungry locally, then show its logs. Us
 # Build and run MacHungry
 
 1. Stop a running copy: `pkill -x MacHungry` (an error is OK if no copy runs).
-2. Run the tests: `swift test`. If a test fails, stop and report the failure.
+2. Run the tests: `scripts/test.sh`. If a test fails, stop and report the failure.
 3. Build the bundle: `scripts/make-app.sh`. The result is `build/MacHungry.app`.
 4. Launch it: `open build/MacHungry.app`.
 5. Check that it runs: `pgrep -x MacHungry`. If there is no PID, read the crash log in `~/Library/Logs/DiagnosticReports/` (newest `MacHungry-*.ips`) and report it.

@@ -12,4 +12,6 @@ paths:
 5. Name tests by behavior: `pidReuseShowsZeroForThatSample`, not `testTracker2`.
 6. The only live-system test is the integration test in spec section 9.2. Mark it with a `.tags(.integration)` tag.
 7. Never change a test to make it pass. If a test is wrong, tell the user and explain why.
-8. Run `swift test` and read the output before you say that a task is done.
+8. Run `scripts/test.sh` and read the output before you say that a task is done.
+9. Never run plain `swift test`. The default build system sometimes omits the Swift Testing plugin path (`plugin for module 'TestingMacros' not found`). `scripts/test.sh` passes the path explicitly.
+10. Integration tests import `HungrySystem`. Never add a test target that imports the `MacHungry` executable.
