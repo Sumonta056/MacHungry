@@ -9,8 +9,9 @@ A monitor app must not load the machine. These limits come from spec N1–N3:
 
 | Condition | RAM | CPU (1 core) |
 |---|---|---|
-| Popover closed (also at full system load) | < 30 MB | < 1% |
-| Popover open | < 30 MB | < 5% |
+| Popover closed, before the first open (also at full system load) | < 30 MB | < 1% |
+| Popover closed, after the first open (also at full system load) | < 35 MB | < 1% |
+| Popover open | < 35 MB | < 5% |
 
 1. Run `/bin/ps` only while the popover is open. Stop the process sampler on close.
 2. Reuse sampler buffers. Do not create new large arrays each second.

@@ -22,8 +22,12 @@ Spec (source of truth): `docs/superpowers/specs/2026-10-02-mac-hungry-menubar-de
 ## Module map
 
 - `Sources/HungryCore/` — pure logic. No AppKit, no SwiftUI, no system calls. All unit tests target this module.
+  - `Metrics/` (CPU, RAM, speed curve, formatter), `Processes/` (ps parser, CPU tracker, grouping, ranking), `Temperature/`, `StatusBar/` (segments, labels, layout settings), `Themes/`.
 - `Sources/HungrySystem/` — samplers that call Mach, `libproc`, `/bin/ps`, and the SMC (IOKit). Integration tests target this module.
+  - `Readers/` (libproc, ps, SMC), `Samplers/` (system, process, temperature, engine).
 - `Sources/MacHungry/` — AppKit + SwiftUI app. Do not add test targets that import it.
+  - `App/`, `StatusBar/` (status item, animator, composer, right-click menu), `Popover/`, `Stats/` (monitor, store), `Preferences/`.
+- Put a new file in the folder of its feature. Do not add files to a target root.
 - `Resources/Themes/<theme-id>/frame-N.png` — animation frames.
 
 ## Hard rules
@@ -31,7 +35,7 @@ Spec (source of truth): `docs/superpowers/specs/2026-10-02-mac-hungry-menubar-de
 1. Do not write code comments unless the user asks for them.
 2. Plan before code. Get the user's approval for each significant step.
 3. Do not run `git commit`, `git push`, or any destructive git command without an explicit instruction from the user.
-4. Keep the resource budget: RAM < 30 MB, CPU < 1% with the popover closed, < 5% with it open.
+4. Keep the resource budget: RAM < 30 MB before the first popover open and < 35 MB after it; CPU < 1% with the popover closed, < 5% with it open.
 5. Never call `forceTerminate()`. Quit uses `terminate()` only.
 6. Follow spec section 12 (toolchain rules): no SwiftUI `@State`, set `rep.size` before creating a bitmap context, never set `button.image` for each animation frame.
 

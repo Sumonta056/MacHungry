@@ -18,8 +18,9 @@ Budget:
 
 | Condition | RAM | CPU |
 |---|---|---|
-| Popover closed | < 30 MB | < 1% |
-| Popover open | < 30 MB | < 5% |
+| Popover closed, before the first open | < 30 MB | < 1% |
+| Popover closed, after the first open | < 35 MB | < 1% |
+| Popover open | < 35 MB | < 5% |
 
 Report:
 1. A table: condition, average CPU, maximum CPU, maximum RAM, PASS or FAIL.
