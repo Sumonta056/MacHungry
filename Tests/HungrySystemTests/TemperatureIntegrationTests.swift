@@ -22,4 +22,9 @@ struct TemperatureIntegrationTests {
         #expect(!sampler.isAvailable)
         #expect(sampler.sample() == nil)
     }
+
+    @Test func engineSkipsTemperatureWhenExcluded() async {
+        let engine = SamplingEngine()
+        #expect(await engine.sampleSystem(includeTemperature: false).temperature == nil)
+    }
 }

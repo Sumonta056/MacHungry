@@ -13,10 +13,24 @@ struct ProcessCPUTrackerTests {
     @Test func percentIsCPUSecondsOverWallSeconds() throws {
         var tracker = ProcessCPUTracker()
         _ = tracker.update(samples: [ProcessSample(pid: 1, cpuSeconds: 10, path: "/bin/a")], at: 100)
-        let usages = tracker.update(samples: [ProcessSample(pid: 1, cpuSeconds: 13, path: "/bin/a")], at: 102)
+        let usages = tracker.update(samples: [ProcessSample(pid: 1, cpuSeconds: 11.5, path: "/bin/a")], at: 102)
         let usage = try #require(usages.first)
-        #expect(usage.percent == 150)
+        #expect(usage.percent == 75)
         #expect(usage.path == "/bin/a")
+    }
+
+    @Test func percentIsShareOfAllCores() throws {
+        var tracker = ProcessCPUTracker(coreCount: 4)
+        _ = tracker.update(samples: [ProcessSample(pid: 1, cpuSeconds: 10, path: "/bin/a")], at: 100)
+        let usages = tracker.update(samples: [ProcessSample(pid: 1, cpuSeconds: 13, path: "/bin/a")], at: 102)
+        #expect(try #require(usages.first).percent == 37.5)
+    }
+
+    @Test func percentNeverExceedsHundred() throws {
+        var tracker = ProcessCPUTracker(coreCount: 2)
+        _ = tracker.update(samples: [ProcessSample(pid: 1, cpuSeconds: 0, path: "/bin/a")], at: 0)
+        let usages = tracker.update(samples: [ProcessSample(pid: 1, cpuSeconds: 3, path: "/bin/a")], at: 1)
+        #expect(try #require(usages.first).percent == 100)
     }
 
     @Test func newPidShowsFromNextSample() {

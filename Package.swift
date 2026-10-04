@@ -7,6 +7,7 @@ let package = Package(
     targets: [
         .target(name: "HungryCore"),
         .target(name: "HungrySystem", dependencies: ["HungryCore"]),
+        .executableTarget(name: "MacHungry", dependencies: ["HungryCore", "HungrySystem"]),
         .testTarget(name: "HungryCoreTests", dependencies: ["HungryCore"]),
         .testTarget(name: "HungrySystemTests", dependencies: ["HungrySystem", "HungryCore"]),
     ]

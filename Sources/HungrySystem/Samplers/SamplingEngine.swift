@@ -11,17 +11,28 @@ public actor SamplingEngine {
 
     private var system = SystemSampler()
     private var processes = ProcessSampler()
-    private let temperature = TemperatureSampler()
+    private let temperature: TemperatureSampler
     private var temperatureTick = 0
     private var lastTemperature: TemperatureReading?
 
-    public init() {}
+    public nonisolated let isTemperatureAvailable: Bool
 
-    public func sampleSystem() -> SystemSnapshot {
-        if temperatureTick % Self.temperatureEvery == 0 {
-            lastTemperature = TemperatureSensors.smooth(previous: lastTemperature, new: temperature.sample())
+    public init() {
+        let sampler = TemperatureSampler()
+        temperature = sampler
+        isTemperatureAvailable = sampler.isAvailable
+    }
+
+    public func sampleSystem(includeTemperature: Bool = true) -> SystemSnapshot {
+        if includeTemperature {
+            if temperatureTick % Self.temperatureEvery == 0 {
+                lastTemperature = TemperatureSensors.smooth(previous: lastTemperature, new: temperature.sample())
+            }
+            temperatureTick += 1
+        } else {
+            temperatureTick = 0
+            lastTemperature = nil
         }
-        temperatureTick += 1
         return SystemSnapshot(cpuPercent: system.sampleCPU(), memory: system.sampleMemory(), temperature: lastTemperature)
     }
 

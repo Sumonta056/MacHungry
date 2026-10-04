@@ -2,7 +2,7 @@ import Testing
 @testable import HungryCore
 
 struct SpeedCurveTests {
-    @Test(arguments: [(0.0, 0.20), (50.0, 0.115), (100.0, 0.03), (-20.0, 0.20), (250.0, 0.03), (Double.nan, 0.20)])
+    @Test(arguments: [(0.0, 0.125), (50.0, 0.0775), (100.0, 0.03), (-20.0, 0.125), (250.0, 0.03), (Double.nan, 0.125)])
     func catIntervalFollowsCPU(cpu: Double, expected: Double) {
         #expect(abs(CatTheme().frameInterval(forCPU: cpu) - expected) < 0.000_001)
     }

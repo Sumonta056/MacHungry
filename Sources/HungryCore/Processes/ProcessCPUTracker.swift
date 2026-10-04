@@ -13,8 +13,11 @@ public struct ProcessUsage: Equatable, Sendable {
 public struct ProcessCPUTracker: Sendable {
     private var lastCPUSeconds: [Int32: Double] = [:]
     private var lastTime: Double?
+    private let coreCount: Double
 
-    public init() {}
+    public init(coreCount: Int = 1) {
+        self.coreCount = Double(max(coreCount, 1))
+    }
 
     public var hasBaseline: Bool { lastTime != nil }
     public var trackedCount: Int { lastCPUSeconds.count }
@@ -29,7 +32,7 @@ public struct ProcessCPUTracker: Sendable {
             next[sample.pid] = sample.cpuSeconds
             guard elapsed > 0, let previous = lastCPUSeconds[sample.pid] else { continue }
             let used = sample.cpuSeconds - previous
-            let percent = used >= 0 ? used / elapsed * 100 : 0
+            let percent = used >= 0 ? min(used / (elapsed * coreCount) * 100, 100) : 0
             usages.append(ProcessUsage(pid: sample.pid, path: sample.path, percent: percent))
         }
         lastCPUSeconds = next

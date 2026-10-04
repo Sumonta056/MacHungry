@@ -10,7 +10,7 @@ public struct ProcessSnapshot: Sendable {
 public struct ProcessSampler {
     public static let psTimeout: TimeInterval = 0.8
 
-    private var tracker = ProcessCPUTracker()
+    private var tracker = ProcessCPUTracker(coreCount: ProcessInfo.processInfo.activeProcessorCount)
 
     public init() {}
 

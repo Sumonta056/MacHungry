@@ -1,7 +1,12 @@
 public enum UsageFormatter {
     public static func percent(_ value: Double?) -> String {
         guard let value, value.isFinite else { return "--" }
-        return "\(Int(value.rounded()))%"
+        return number(value) + "%"
+    }
+
+    public static func number(_ value: Double?) -> String {
+        guard let value, value.isFinite else { return "--" }
+        return "\(Int(value.rounded()))"
     }
 
     public static func tooltip(cpu: Double?, memory: Double?, temperature: Double? = nil) -> String {
