@@ -4,7 +4,7 @@ public enum PSRunner {
     public static func run(timeout: TimeInterval) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/ps")
-        process.arguments = ["-axo", "pid=,time=,comm="]
+        process.arguments = ["-axo", "pid=,ppid=,time=,comm="]
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice

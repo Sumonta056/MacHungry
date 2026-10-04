@@ -19,7 +19,7 @@ public enum LibprocReader {
             let length = proc_pidpath(pid, &pathBuffer, UInt32(pathBufferSize))
             guard length > 0 else { continue }
             let path = String(decoding: pathBuffer.prefix(Int(length)).map { UInt8(bitPattern: $0) }, as: UTF8.self)
-            result.append(ProcessSample(pid: pid, cpuSeconds: Double(cpuTicks) * scale / 1_000_000_000, path: path))
+            result.append(ProcessSample(pid: pid, parentPid: parentPid(of: pid), cpuSeconds: Double(cpuTicks) * scale / 1_000_000_000, path: path))
         }
         return result
     }
@@ -32,6 +32,13 @@ public enum LibprocReader {
             }
         }
         return status == 0 ? info.ri_user_time + info.ri_system_time : nil
+    }
+
+    private static func parentPid(of pid: pid_t) -> Int32 {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+        let read = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size)
+        return read == size ? Int32(bitPattern: info.pbi_ppid) : 0
     }
 
     private static func timebaseScale() -> Double {

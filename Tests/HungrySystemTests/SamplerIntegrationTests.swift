@@ -22,16 +22,20 @@ struct SamplerIntegrationTests {
         #expect(memory.totalBytes > 0)
     }
 
-    @Test func psRunnerReadsRootProcesses() throws {
+    @Test func psRunnerReadsRootProcessesAndParentPids() throws {
         let output = try #require(PSRunner.run(timeout: ProcessSampler.psTimeout))
         let samples = PSParser.parse(output)
         #expect(samples.count > 50)
         #expect(samples.contains { $0.pid == 1 })
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let own = try #require(samples.first { $0.pid == ownPID })
+        #expect(own.parentPid == getppid())
     }
 
-    @Test func libprocFallbackReadsOwnProcesses() {
+    @Test func libprocFallbackReadsOwnProcessAndParentPid() throws {
         let ownPID = ProcessInfo.processInfo.processIdentifier
-        #expect(LibprocReader.samples().contains { $0.pid == ownPID })
+        let own = try #require(LibprocReader.samples().first { $0.pid == ownPID })
+        #expect(own.parentPid == getppid())
     }
 
     @Test func processSamplerIsReadyOnSecondSample() async throws {

@@ -20,8 +20,9 @@ public struct ProcessSampler {
         let now = ProcessInfo.processInfo.systemUptime
         let samples = output.map(PSParser.parse) ?? LibprocReader.samples()
         let usages = tracker.update(samples: samples, at: now)
+        let tree = ProcessTree(samples: samples)
         return ProcessSnapshot(
-            apps: AppGrouper.topApps(usages, limit: limit),
+            apps: AppGrouper.topApps(tree.ownerUsages(usages), limit: limit),
             isReady: wasReady,
             isLimited: output == nil
         )

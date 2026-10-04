@@ -20,23 +20,40 @@ struct PSParserTests {
     }
 
     @Test func parsesLineWithLeadingSpacesAndPathWithSpaces() throws {
-        let sample = try #require(PSParser.parseLine("  412   1:30.00 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
-        #expect(sample == ProcessSample(pid: 412, cpuSeconds: 90, path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
+        let sample = try #require(PSParser.parseLine("  412     1   1:30.00 /Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
+        #expect(sample == ProcessSample(pid: 412, parentPid: 1, cpuSeconds: 90, path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"))
     }
 
-    @Test(arguments: ["", "   ", "abc 0:01.00 /bin/x", "12 bad /bin/x", "12 0:01.00", "12 0:01.00   "])
+    @Test func parsesParentPidColumn() throws {
+        let sample = try #require(PSParser.parseLine(" 3286  3183   0:00.71 -/bin/zsh"))
+        #expect(sample.pid == 3286)
+        #expect(sample.parentPid == 3183)
+        #expect(sample.path == "-/bin/zsh")
+    }
+
+    @Test(arguments: [
+        "",
+        "   ",
+        "abc 1 0:01.00 /bin/x",
+        "12 x 0:01.00 /bin/x",
+        "12 1 bad /bin/x",
+        "12 1 0:01.00",
+        "12 1 0:01.00   ",
+        "12 0:01.00 /bin/x",
+    ])
     func rejectsMalformedLine(line: String) {
         #expect(PSParser.parseLine(Substring(line)) == nil)
     }
 
     @Test func parseSkipsBadLinesAndKeepsGoodLines() {
         let output = """
-            1  34:42.90 /sbin/launchd
+            1     0  34:42.90 /sbin/launchd
         garbage line
-          287   0:05.04 /usr/libexec/textunderstandingd
+          287     1   0:05.04 /usr/libexec/textunderstandingd
 
         """
         let samples = PSParser.parse(output)
         #expect(samples.map(\.pid) == [1, 287])
+        #expect(samples.map(\.parentPid) == [0, 1])
     }
 }

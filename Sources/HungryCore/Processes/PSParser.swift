@@ -8,11 +8,14 @@ public enum PSParser {
         guard let pidEnd = afterLeadingSpace.firstIndex(where: \.isWhitespace),
               let pid = Int32(afterLeadingSpace[..<pidEnd]) else { return nil }
         let afterPid = afterLeadingSpace[pidEnd...].drop(while: \.isWhitespace)
-        guard let timeEnd = afterPid.firstIndex(where: \.isWhitespace),
-              let seconds = parseTime(afterPid[..<timeEnd]) else { return nil }
-        let path = afterPid[timeEnd...].drop(while: \.isWhitespace)
+        guard let parentEnd = afterPid.firstIndex(where: \.isWhitespace),
+              let parentPid = Int32(afterPid[..<parentEnd]) else { return nil }
+        let afterParent = afterPid[parentEnd...].drop(while: \.isWhitespace)
+        guard let timeEnd = afterParent.firstIndex(where: \.isWhitespace),
+              let seconds = parseTime(afterParent[..<timeEnd]) else { return nil }
+        let path = afterParent[timeEnd...].drop(while: \.isWhitespace)
         guard !path.isEmpty else { return nil }
-        return ProcessSample(pid: pid, cpuSeconds: seconds, path: String(path))
+        return ProcessSample(pid: pid, parentPid: parentPid, cpuSeconds: seconds, path: String(path))
     }
 
     public static func parseTime(_ text: Substring) -> Double? {
